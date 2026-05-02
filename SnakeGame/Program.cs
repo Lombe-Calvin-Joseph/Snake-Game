@@ -7,30 +7,29 @@ enum Direction { Up, Down, Left, Right }
 
 class SnakeGame
 {
-    // Board dimensions (inner play area, excluding walls)
     const int Width = 78;
     const int Height = 26;
     const int OffsetX = 1;
-    const int OffsetY = 2; // row 0 = scores, row 1 = top wall
+    const int OffsetY = 2;
 
     const string HighScoreFile = "highscore.txt";
 
-    // Snake
     LinkedList<(int x, int y)> snake = new();
+    List<(int x, int y)> obstacles = new();
+
     Direction dir = Direction.Right;
     Direction nextDir = Direction.Right;
 
-    // Food
     (int x, int y) food;
 
-    // State
     int score = 0;
     int highScore = 0;
+    int level = 1; // ✅ NEW
+
     bool paused = false;
     bool gameOver = false;
     bool victory = false;
 
-    // Rendering buffer
     char[,] buffer = new char[Height + 2, Width + 2];
     ConsoleColor[,] colorBuffer = new ConsoleColor[Height + 2, Width + 2];
     char[,] prevBuffer = new char[Height + 2, Width + 2];
@@ -41,8 +40,14 @@ class SnakeGame
     static void Main()
     {
         Console.Title = "Snake Game - C# Console";
-        Console.SetWindowSize(80, 30);
-        Console.SetBufferSize(80, 30);
+
+        try
+        {
+            Console.SetWindowSize(80, 30);
+            Console.SetBufferSize(80, 30);
+        }
+        catch { }
+
         Console.CursorVisible = false;
 
         while (true)
@@ -66,20 +71,28 @@ class SnakeGame
     void InitGame()
     {
         snake.Clear();
+        obstacles.Clear();
+
         score = 0;
+        level = 1; // ✅ RESET LEVEL
         paused = false;
         gameOver = false;
         victory = false;
+
         dir = Direction.Right;
         nextDir = Direction.Right;
 
-        // Start snake in the middle, 3 segments
-        // Head at midX (rightmost), tail extends left — moving Right is safe
         int midX = Width / 2;
         int midY = Height / 2;
-        snake.AddLast((midX, midY));       // head
-        snake.AddLast((midX - 1, midY));   // body
-        snake.AddLast((midX - 2, midY));   // tail
+
+        snake.AddLast((midX, midY));
+        snake.AddLast((midX - 1, midY));
+        snake.AddLast((midX - 2, midY));
+
+        // Starting obstacles
+        obstacles.Add((10, 5));
+        obstacles.Add((20, 10));
+        obstacles.Add((30, 15));
 
         SpawnFood();
         ClearBuffers();
@@ -105,7 +118,9 @@ class SnakeGame
             {
                 Update();
                 Render();
-                int delay = Math.Max(50, 150 - (score / 10 * 3));
+
+                // ✅ SPEED BASED ON LEVEL
+                int delay = Math.Max(50, 150 - (level * 10));
                 Thread.Sleep(delay);
             }
             else
@@ -162,20 +177,25 @@ class SnakeGame
     {
         dir = nextDir;
         var head = snake.First!.Value;
+
         (int nx, int ny) = dir switch
         {
-            Direction.Up    => (head.x, head.y - 1),
-            Direction.Down  => (head.x, head.y + 1),
-            Direction.Left  => (head.x - 1, head.y),
+            Direction.Up => (head.x, head.y - 1),
+            Direction.Down => (head.x, head.y + 1),
+            Direction.Left => (head.x - 1, head.y),
             Direction.Right => (head.x + 1, head.y),
             _ => head
         };
 
-        // Wall collision
         if (nx < 0 || nx >= Width || ny < 0 || ny >= Height)
         { gameOver = true; return; }
 
-        // Self collision (skip head itself, check body only)
+        foreach (var obs in obstacles)
+        {
+            if (nx == obs.x && ny == obs.y)
+            { gameOver = true; return; }
+        }
+
         bool skipFirst = true;
         foreach (var seg in snake)
         {
@@ -189,14 +209,29 @@ class SnakeGame
         if (nx == food.x && ny == food.y)
         {
             score += 10;
+
+            // ✅ LEVEL SYSTEM
+            int newLevel = (score / 50) + 1;
+            if (newLevel > level)
+                level = newLevel;
+
+            // Obstacles scaling
+            if (score % 30 == 0)
+            {
+                var newObs = (rng.Next(0, Width), rng.Next(0, Height));
+                if (!snake.Contains(newObs) && newObs != food)
+                    obstacles.Add(newObs);
+            }
+
             if (score > highScore)
             {
                 highScore = score;
                 SaveHighScore(highScore);
             }
-            // Check for victory (board full)
+
             if (snake.Count >= Width * Height)
             { victory = true; return; }
+
             SpawnFood();
         }
         else
@@ -209,6 +244,7 @@ class SnakeGame
     {
         var occupied = new HashSet<(int, int)>(snake);
         var empty = new List<(int, int)>();
+
         for (int y = 0; y < Height; y++)
             for (int x = 0; x < Width; x++)
                 if (!occupied.Contains((x, y)))
@@ -217,8 +253,6 @@ class SnakeGame
         if (empty.Count == 0) { victory = true; return; }
         food = empty[rng.Next(empty.Count)];
     }
-
-    // ── Rendering ────────────────────────────────────────────────────────────
 
     void Render()
     {
@@ -232,7 +266,6 @@ class SnakeGame
         int rows = Height + 2;
         int cols = Width + 2;
 
-        // Clear buffer
         for (int r = 0; r < rows; r++)
             for (int c = 0; c < cols; c++)
             {
@@ -240,22 +273,23 @@ class SnakeGame
                 colorBuffer[r, c] = ConsoleColor.Black;
             }
 
-        // Walls
         for (int c = 0; c < cols; c++)
         {
             SetCell(0, c, '█', ConsoleColor.DarkGray);
             SetCell(rows - 1, c, '█', ConsoleColor.DarkGray);
         }
+
         for (int r = 0; r < rows; r++)
         {
             SetCell(r, 0, '█', ConsoleColor.DarkGray);
             SetCell(r, cols - 1, '█', ConsoleColor.DarkGray);
         }
 
-        // Food
         SetCell(food.y + 1, food.x + 1, '●', ConsoleColor.Red);
 
-        // Snake body (draw first so head overwrites)
+        foreach (var obs in obstacles)
+            SetCell(obs.y + 1, obs.x + 1, '#', ConsoleColor.DarkRed);
+
         bool first = true;
         foreach (var seg in snake)
         {
@@ -263,7 +297,6 @@ class SnakeGame
             SetCell(seg.y + 1, seg.x + 1, '■', ConsoleColor.DarkGreen);
         }
 
-        // Snake head
         var h = snake.First!.Value;
         SetCell(h.y + 1, h.x + 1, '@', ConsoleColor.Green);
     }
@@ -278,6 +311,7 @@ class SnakeGame
     {
         int rows = Height + 2;
         int cols = Width + 2;
+
         for (int r = 0; r < rows; r++)
         {
             for (int c = 0; c < cols; c++)
@@ -301,8 +335,10 @@ class SnakeGame
     {
         Console.SetCursorPosition(0, 0);
         Console.ForegroundColor = ConsoleColor.White;
-        string scoreStr = $" Score: {score}";
+
+        string scoreStr = $" Score: {score} | Level: {level}";
         string hiStr = $"High Score: {highScore} ";
+
         Console.Write(scoreStr.PadRight(80 - hiStr.Length));
         Console.Write(hiStr);
         Console.ResetColor();
@@ -313,6 +349,7 @@ class SnakeGame
         string msg = "  *** PAUSED — Press P to resume ***  ";
         int col = (80 - msg.Length) / 2;
         int row = (30 - 1) / 2;
+
         Console.SetCursorPosition(col, row);
         Console.ForegroundColor = ConsoleColor.Cyan;
         Console.Write(msg);
@@ -324,9 +361,10 @@ class SnakeGame
         string blank = new string(' ', 40);
         int col = (80 - 38) / 2;
         int row = (30 - 1) / 2;
+
         Console.SetCursorPosition(col, row);
         Console.Write(blank);
-        // Force full re-render
+
         ClearBuffers();
         Render();
     }
@@ -334,21 +372,14 @@ class SnakeGame
     void RenderGameOver()
     {
         Console.Clear();
-        Console.ForegroundColor = ConsoleColor.Yellow;
 
-        string title  = victory ? "*** YOU WIN! ***" : "*** GAME OVER ***";
-        string s1     = $"Final Score : {score}";
-        string s2     = $"High Score  : {highScore}";
-        string s3     = "Press Space or Enter to play again";
-        string s4     = "Press Escape to quit";
+        string title = victory ? "*** YOU WIN! ***" : "*** GAME OVER ***";
 
-        int midRow = 12;
-        WriteCentered(midRow,     title,  ConsoleColor.Yellow);
-        WriteCentered(midRow + 2, s1,     ConsoleColor.White);
-        WriteCentered(midRow + 3, s2,     ConsoleColor.White);
-        WriteCentered(midRow + 5, s3,     ConsoleColor.Cyan);
-        WriteCentered(midRow + 6, s4,     ConsoleColor.DarkCyan);
-        Console.ResetColor();
+        WriteCentered(12, title, ConsoleColor.Yellow);
+        WriteCentered(14, $"Final Score : {score}", ConsoleColor.White);
+        WriteCentered(15, $"High Score  : {highScore}", ConsoleColor.White);
+        WriteCentered(17, "Press Space or Enter to play again", ConsoleColor.Cyan);
+        WriteCentered(18, "Press Escape to quit", ConsoleColor.DarkCyan);
     }
 
     void WriteCentered(int row, string text, ConsoleColor color)
@@ -358,8 +389,6 @@ class SnakeGame
         Console.ForegroundColor = color;
         Console.Write(text);
     }
-
-    // ── Persistence ──────────────────────────────────────────────────────────
 
     static int LoadHighScore()
     {
